@@ -1,0 +1,1 @@
+call init.cmd  > output1.log 2>&1
