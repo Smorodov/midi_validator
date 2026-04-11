@@ -27,3 +27,8 @@ prebuilt-scripts/
 cmake-build-*
 .vs
 init.cmd
+deployer.exe
+dpl_creator.exe
+dplcreator.cfg
+patch.dpl
+run_patch.cmd

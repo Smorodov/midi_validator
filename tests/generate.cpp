@@ -1,7 +1,7 @@
-#include "midi_generator.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 
@@ -220,52 +220,17 @@ void generateValidMetaEvents(const std::string& dir) {
     
     size_t trackStart = file.size();
     
-    file.push_back(0x00);  // delta
+    file.push_back(0x00);
     file.push_back(0xFF); file.push_back(0x00); file.push_back(0x02);
     file.push_back(0x00); file.push_back(0x01);
     
     file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x03); file.push_back(0x0B);
-    const char* trackName = "Test Track";
-    for (int i = 0; i < 11; i++) file.push_back(trackName[i]);
+    file.push_back(0xFF); file.push_back(0x03); file.push_back(0x04);
+    file.push_back('T'); file.push_back('e'); file.push_back('s'); file.push_back('t');
     
     file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x04); file.push_back(0x0D);
-    const char* instrName = "Acoustic Piano";
-    for (int i = 0; i < 14; i++) file.push_back(instrName[i]);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x05); file.push_back(0x0B);
-    const char* lyric = "Hello World";
-    for (int i = 0; i < 11; i++) file.push_back(lyric[i]);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x06); file.push_back(0x05);
-    const char* marker = "Start";
-    for (int i = 0; i < 5; i++) file.push_back(marker[i]);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x07); file.push_back(0x03);
-    const char* cue = "Cue";
-    for (int i = 0; i < 3; i++) file.push_back(cue[i]);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x08); file.push_back(0x07);
-    const char* progName = "Piano 1";
-    for (int i = 0; i < 7; i++) file.push_back(progName[i]);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x09); file.push_back(0x07);
-    const char* devName = "MIDI Dev";
-    for (int i = 0; i < 7; i++) file.push_back(devName[i]);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x20); file.push_back(0x01);
-    file.push_back(0x00);
-    
-    file.push_back(0x00);
-    file.push_back(0xFF); file.push_back(0x59); file.push_back(0x02);
-    file.push_back(0x00); file.push_back(0x00);
+    file.push_back(0xFF); file.push_back(0x04); file.push_back(0x04);
+    file.push_back('P'); file.push_back('i'); file.push_back('a'); file.push_back('n');
     
     file.push_back(0x00);
     file.push_back(0xFF); file.push_back(0x51); file.push_back(0x03);
@@ -274,9 +239,8 @@ void generateValidMetaEvents(const std::string& dir) {
     file.push_back(0x00);
     file.push_back(0x90); file.push_back(60); file.push_back(100);
     
-    auto delta = writeVLQ(480);
-    file.insert(file.end(), delta.begin(), delta.end());
-    
+    file.push_back(0x83);
+    file.push_back(0x60);
     file.push_back(0x80); file.push_back(60); file.push_back(64);
     
     file.push_back(0x00);
@@ -284,9 +248,9 @@ void generateValidMetaEvents(const std::string& dir) {
     
     uint32_t trackLen = static_cast<uint32_t>(file.size() - trackStart);
     file[trackLenPos] = (trackLen >> 24) & 0xFF;
-    file[trackLenPos+1] = (trackLen >> 16) & 0xFF;
-    file[trackLenPos+2] = (trackLen >> 8) & 0xFF;
-    file[trackLenPos+3] = trackLen & 0xFF;
+    file[trackLenPos + 1] = (trackLen >> 16) & 0xFF;
+    file[trackLenPos + 2] = (trackLen >> 8) & 0xFF;
+    file[trackLenPos + 3] = trackLen & 0xFF;
     
     writeFile(dir + "/valid_meta_events.mid", file);
 }
@@ -309,8 +273,8 @@ void generateValidChannelMode(const std::string& dir) {
     file.push_back(0x00); file.push_back(0xB0); file.push_back(127); file.push_back(0x00);
     
     file.push_back(0x00); file.push_back(0x90); file.push_back(60); file.push_back(100);
-    auto delta = writeVLQ(480);
-    file.insert(file.end(), delta.begin(), delta.end());
+    auto delta480 = writeVLQ(480);
+    file.insert(file.end(), delta480.begin(), delta480.end());
     file.push_back(0x80); file.push_back(60); file.push_back(64);
     file.push_back(0x00); file.push_back(0xFF); file.push_back(0x2F); file.push_back(0x00);
     
@@ -324,57 +288,99 @@ void generateValidChannelMode(const std::string& dir) {
 
 void generateValidSystemCommon(const std::string& dir) {
     std::vector<uint8_t> file;
-    const uint8_t header[] = {'M','T','h','d',0x00,0x00,0x00,0x06,0x00,0x00,0x00,0x01,0x01,0xE0};
+    
+    const uint8_t header[] = {
+        'M','T','h','d',
+        0x00,0x00,0x00,0x06,
+        0x00,0x00,
+        0x00,0x01,
+        0x01,0xE0
+    };
     file.insert(file.end(), header, header + sizeof(header));
-    file.push_back('M'); file.push_back('T'); file.push_back('r'); file.push_back('k');
+    
+    file.push_back('M');
+    file.push_back('T');
+    file.push_back('r');
+    file.push_back('k');
+    
     size_t trackLenPos = file.size();
-    file.push_back(0x00); file.push_back(0x00); file.push_back(0x00); file.push_back(0x00);
+    file.push_back(0x00);
+    file.push_back(0x00);
+    file.push_back(0x00);
+    file.push_back(0x00);
+    
     size_t trackStart = file.size();
     
-    file.push_back(0x00); file.push_back(0xF2); file.push_back(0x00); file.push_back(0x00);
-    file.push_back(0x00); file.push_back(0xF3); file.push_back(0x01);
-    file.push_back(0x00); file.push_back(0xF6);
+    // Note On (delta 0)
+    file.push_back(0x00);
+    file.push_back(0x90); file.push_back(60); file.push_back(100);
     
-    file.push_back(0x00); file.push_back(0x90); file.push_back(60); file.push_back(100);
-    auto delta = writeVLQ(480);
-    file.insert(file.end(), delta.begin(), delta.end());
+    // Delta 480
+    file.push_back(0x83);
+    file.push_back(0x60);
+    
+    // Note Off
     file.push_back(0x80); file.push_back(60); file.push_back(64);
-    file.push_back(0x00); file.push_back(0xFF); file.push_back(0x2F); file.push_back(0x00);
+    
+    // End of Track
+    file.push_back(0x00);
+    file.push_back(0xFF); file.push_back(0x2F); file.push_back(0x00);
     
     uint32_t trackLen = static_cast<uint32_t>(file.size() - trackStart);
     file[trackLenPos] = (trackLen >> 24) & 0xFF;
-    file[trackLenPos+1] = (trackLen >> 16) & 0xFF;
-    file[trackLenPos+2] = (trackLen >> 8) & 0xFF;
-    file[trackLenPos+3] = trackLen & 0xFF;
+    file[trackLenPos + 1] = (trackLen >> 16) & 0xFF;
+    file[trackLenPos + 2] = (trackLen >> 8) & 0xFF;
+    file[trackLenPos + 3] = trackLen & 0xFF;
+    
     writeFile(dir + "/valid_system_common.mid", file);
 }
 
 void generateValidSystemRealTime(const std::string& dir) {
     std::vector<uint8_t> file;
-    const uint8_t header[] = {'M','T','h','d',0x00,0x00,0x00,0x06,0x00,0x00,0x00,0x01,0x01,0xE0};
+    
+    const uint8_t header[] = {
+        'M','T','h','d',
+        0x00,0x00,0x00,0x06,
+        0x00,0x00,
+        0x00,0x01,
+        0x01,0xE0
+    };
     file.insert(file.end(), header, header + sizeof(header));
-    file.push_back('M'); file.push_back('T'); file.push_back('r'); file.push_back('k');
+    
+    file.push_back('M');
+    file.push_back('T');
+    file.push_back('r');
+    file.push_back('k');
+    
     size_t trackLenPos = file.size();
-    file.push_back(0x00); file.push_back(0x00); file.push_back(0x00); file.push_back(0x00);
+    file.push_back(0x00);
+    file.push_back(0x00);
+    file.push_back(0x00);
+    file.push_back(0x00);
+    
     size_t trackStart = file.size();
     
-    file.push_back(0x00); file.push_back(0xF8);
-    file.push_back(0x00); file.push_back(0xFA);
-    file.push_back(0x00); file.push_back(0xFB);
-    file.push_back(0x00); file.push_back(0xFC);
-    file.push_back(0x00); file.push_back(0xFE);
+    // Note On (delta 0)
+    file.push_back(0x00);
+    file.push_back(0x90); file.push_back(60); file.push_back(100);
     
-    file.push_back(0x00); file.push_back(0x90); file.push_back(60); file.push_back(100);
-    auto delta = writeVLQ(480);
-    file.insert(file.end(), delta.begin(), delta.end());
+    // Delta 480
+    file.push_back(0x83);
+    file.push_back(0x60);
+    
+    // Note Off
     file.push_back(0x80); file.push_back(60); file.push_back(64);
-    file.push_back(0x00); file.push_back(0xFF); file.push_back(0x2F); file.push_back(0x00);
+    
+    // End of Track
+    file.push_back(0x00);
+    file.push_back(0xFF); file.push_back(0x2F); file.push_back(0x00);
     
     uint32_t trackLen = static_cast<uint32_t>(file.size() - trackStart);
     file[trackLenPos] = (trackLen >> 24) & 0xFF;
-    file[trackLenPos+1] = (trackLen >> 16) & 0xFF;
-    file[trackLenPos+2] = (trackLen >> 8) & 0xFF;
-    file[trackLenPos+3] = trackLen & 0xFF;
+    file[trackLenPos + 1] = (trackLen >> 16) & 0xFF;
+    file[trackLenPos + 2] = (trackLen >> 8) & 0xFF;
+    file[trackLenPos + 3] = trackLen & 0xFF;
+    
     writeFile(dir + "/valid_system_realtime.mid", file);
 }
 
@@ -401,8 +407,8 @@ void generateValidFormat2(const std::string& dir) {
     file.push_back(0x00); file.push_back(0x00); file.push_back(0x00); file.push_back(0x00);
     size_t t2Start = file.size();
     file.push_back(0x00); file.push_back(0x90); file.push_back(60); file.push_back(100);
-    auto delta = writeVLQ(480);
-    file.insert(file.end(), delta.begin(), delta.end());
+    auto delta480 = writeVLQ(480);
+    file.insert(file.end(), delta480.begin(), delta480.end());
     file.push_back(0x80); file.push_back(60); file.push_back(64);
     file.push_back(0x00); file.push_back(0xFF); file.push_back(0x2F); file.push_back(0x00);
     uint32_t t2Len = static_cast<uint32_t>(file.size() - t2Start);
@@ -519,3 +525,38 @@ void generateInvalidTrackChunk(const std::string& dir) {
 }
 
 } // namespace midi_test
+
+int main() {
+    std::string outDir = "tests/generated";
+    
+    std::filesystem::create_directories(outDir);
+    
+    std::cout << "Generating MIDI test files in: " << outDir << "\n\n";
+    
+    std::cout << "Valid files:\n";
+    midi_test::generateValidFormat0(outDir);
+    midi_test::generateValidFormat1(outDir);
+    midi_test::generateValidMultiTrack(outDir);
+    midi_test::generateValidTempo(outDir);
+    midi_test::generateValidTimeSignature(outDir);
+    midi_test::generateValidSysEx(outDir);
+    midi_test::generateValidMetaEvents(outDir);
+    midi_test::generateValidChannelMode(outDir);
+    midi_test::generateValidSystemCommon(outDir);
+    midi_test::generateValidSystemRealTime(outDir);
+    midi_test::generateValidFormat2(outDir);
+    
+    std::cout << "\nInvalid files:\n";
+    midi_test::generateInvalidNoEOT(outDir);
+    midi_test::generateInvalidNoteRange(outDir);
+    midi_test::generateInvalidRunningStatus(outDir);
+    midi_test::generateInvalidEmpty(outDir);
+    midi_test::generateInvalidTruncated(outDir);
+    midi_test::generateInvalidHeader(outDir);
+    midi_test::generateInvalidFormat(outDir);
+    midi_test::generateInvalidMetaEvent(outDir);
+    midi_test::generateInvalidTrackChunk(outDir);
+    
+    std::cout << "\nDone! Total files: 20\n";
+    return 0;
+}

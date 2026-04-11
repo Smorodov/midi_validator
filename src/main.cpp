@@ -1,26 +1,58 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cstring>
-#include <cstdint>
 #include "midi_analyzer.h"
+#include "report_formatter.h"
+#include <iostream>
+#include <string>
+#include <memory>
 
-#define VERSION "6.0.0"
+void printUsage(const char* programName) {
+    std::cout << "\nMIDI Validator v7.0.0\n";
+    std::cout << "Usage: " << programName << " <midi_file> [options]\n\n";
+    std::cout << "Options:\n";
+    std::cout << "  --format, -f <format>   Output format: console, json, silent\n";
+    std::cout << "  --help, -h              Show this help\n";
+    std::cout << "  --version, -v           Show version\n\n";
+    std::cout << "Examples:\n";
+    std::cout << "  " << programName << " song.mid\n";
+    std::cout << "  " << programName << " song.mid --format json\n";
+    std::cout << "  " << programName << " song.mid --format silent\n\n";
+}
+
+void printVersion() {
+    std::cout << "MIDI Validator v7.0.0\n";
+}
 
 int main(int argc, char* argv[]) {
-    std::cout << "\n+--------------------------------------------------+\n";
-    std::cout << "|     MIDI VALIDATOR v" << VERSION << " (C++)                  |\n";
-    std::cout << "+--------------------------------------------------+\n";
-    
     if (argc < 2) {
-        std::cout << "Usage: " << argv[0] << " <midi_file>\n";
-        return 1;
+        printUsage(argv[0]);
+        return 2;
     }
     
-    MidiAnalyzer analyzer;
-    MidiInfo info = analyzer.analyze(argv[1]);
-    analyzer.printReport(argv[1], info);
+    std::string filename;
+    std::string formatName = "console";
+    bool showHelp = false;
+    bool showVersion = false;
     
-    std::cout << "\nExit code: " << (info.is_valid ? 0 : 1) << "\n";
-    return info.is_valid ? 0 : 1;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") showHelp = true;
+        else if (arg == "--version" || arg == "-v") showVersion = true;
+        else if ((arg == "--format" || arg == "-f") && i + 1 < argc) formatName = argv[++i];
+        else if (arg[0] != '-') filename = arg;
+    }
+    
+    if (showHelp) { printUsage(argv[0]); return 0; }
+    if (showVersion) { printVersion(); return 0; }
+    if (filename.empty()) { printUsage(argv[0]); return 2; }
+    
+    auto formatter = midi::FormatterFactory::create(formatName);
+    if (!formatter) {
+        std::cerr << "Unknown format: " << formatName << "\n";
+        return 2;
+    }
+    
+    midi::MidiAnalyzer analyzer;
+    midi::AnalysisResult result = analyzer.analyzeFile(filename);
+    
+    if (formatName != "silent") std::cout << formatter->format(result, filename);
+    return result.isValid ? 0 : 1;
 }

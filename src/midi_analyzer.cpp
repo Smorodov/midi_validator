@@ -1,397 +1,318 @@
 #include "midi_analyzer.h"
-#include <iostream>
-#include <fstream>
-#include <cstring>
+#include "midi_spec.h"
+#include <cmath>
+#include <algorithm>
 
-uint16_t MidiAnalyzer::read_be16(const uint8_t* p) {
-    return (p[0] << 8) | p[1];
-}
+namespace midi {
 
-uint32_t MidiAnalyzer::read_be32(const uint8_t* p) {
-    return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
-}
+MidiAnalyzer::MidiAnalyzer() {}
+MidiAnalyzer::~MidiAnalyzer() {}
 
-uint32_t MidiAnalyzer::read_varlen(std::ifstream& file) {
-    uint32_t value = 0;
-    uint8_t byte;
-    do {
-        if (!file.read(reinterpret_cast<char*>(&byte), 1)) {
-            return value;
+AnalysisResult MidiAnalyzer::analyze(const MidiFileData& fileData) {
+    AnalysisResult result;
+    result.rawData = fileData;
+    result.tracksFound = static_cast<int>(fileData.tracks.size());
+    std::map<int, int> activeNotes;
+    
+    // Проверка формата
+    if (!MidiSpec::isValidFormat(fileData.format)) {
+        result.isValid = false;
+        result.errorMessage = "Invalid format: " + std::to_string(fileData.format);
+        return result;
+    }
+    
+    // Проверка SMPTE
+    if (fileData.isSMPTE && !MidiSpec::isValidSMPTE(fileData.smpteFrames)) {
+        result.isValid = false;
+        result.errorMessage = "Invalid SMPTE value: " + std::to_string(fileData.smpteFrames);
+        return result;
+    }
+    
+    for (const auto& track : fileData.tracks) {
+        if (track.hasEndOfTrack) result.tracksWithEOT++;
+        for (const auto& event : track.events) {
+            result.totalEvents++;
+            processEvent(event, result, activeNotes);
+            if (!result.isValid) return result;
         }
-        value = (value << 7) | (byte & 0x7F);
-    } while (byte & 0x80);
-    return value;
+    }
+    
+    calculatePolyphony(result, fileData);
+    calculateDuration(result, fileData);
+    validateRules(fileData, result);
+    
+    if (result.noteOnCount > 0) result.hasNotes = true;
+    return result;
 }
 
-MidiInfo MidiAnalyzer::analyze(const std::string& filename) {
-    MidiInfo info;
-    memset(&info, 0, sizeof(info));
-    info.is_valid = true;
-    info.min_note = 127;
-    info.max_note = 0;
+AnalysisResult MidiAnalyzer::analyzeFile(const std::string& filename) {
+    MidiFileReader reader;
+    MidiFileData fileData = reader.readFile(filename);
     
-    std::ifstream file(filename, std::ios::binary);
-    if (!file) {
-        info.is_valid = false;
-        info.error_msg = "Cannot open file";
-        return info;
+    if (!fileData.isValid) {
+        AnalysisResult result;
+        result.isValid = false;
+        result.errorMessage = fileData.errorMessage;
+        m_lastError = fileData.errorMessage;
+        return result;
+    }
+    return analyze(fileData);
+}
+
+void MidiAnalyzer::processEvent(const MidiEvent& event, AnalysisResult& result, std::map<int, int>& activeNotes) {
+    // Мета-события
+    if (event.type == EventType::MetaEvent) {
+        result.metaEventCount++;
+        if (event.data.empty()) return;
+        
+        uint8_t metaType = event.data[0];
+        
+        // Проверка типа мета-события
+        if (VALID_META_TYPES.find(metaType) == VALID_META_TYPES.end()) {
+            result.isValid = false;
+            result.errorMessage = "Invalid meta event type: 0x" + std::to_string(metaType);
+            return;
+        }
+        
+        // Обработка Set Tempo
+        if (metaType == MetaEvent::SET_TEMPO && event.data.size() >= 4) {
+            uint32_t uspq = (event.data[1] << 16) | (event.data[2] << 8) | event.data[3];
+            if (uspq > 0) {
+                double bpm = 60000000.0 / uspq;
+                if (bpm < result.minBPM) result.minBPM = bpm;
+                if (bpm > result.maxBPM) result.maxBPM = bpm;
+            }
+        }
+        return;
     }
     
-    file.seekg(0, std::ios::end);
-    info.file_size = file.tellg();
-    file.seekg(0, std::ios::beg);
+    // System Real-Time - пропускаем
+    if (static_cast<uint8_t>(event.type) >= 0xF8 && static_cast<uint8_t>(event.type) < 0xFF) return;
     
-    uint8_t header[14];
-    file.read(reinterpret_cast<char*>(header), 14);
-    if (file.gcount() != 14) {
-        info.is_valid = false;
-        info.error_msg = "File too small";
-        return info;
-    }
-    
-    if (memcmp(header, "MThd", 4) != 0) {
-        info.is_valid = false;
-        info.error_msg = "Not a MIDI file";
-        return info;
-    }
-    
-    if (read_be32(header + 4) != 6) {
-        info.is_valid = false;
-        info.error_msg = "Invalid header length";
-        return info;
-    }
-    
-    info.format = read_be16(header + 8);
-    info.num_tracks = read_be16(header + 10);
-    info.division = read_be16(header + 12);
-    
-    for (int t = 0; t < info.num_tracks && info.is_valid; t++) {
-        uint8_t track_header[8];
-        file.read(reinterpret_cast<char*>(track_header), 8);
-        if (file.gcount() != 8) {
-            info.is_valid = false;
-            info.error_msg = "Cannot read track header";
+    switch (event.type) {
+        case EventType::NoteOn: {
+            auto ne = extractNoteEvent(event);
+            result.noteOnCount++;
+            
+            if (!MidiSpec::isValidNote(ne.note)) {
+                result.isValid = false;
+                result.errorMessage = "Note out of range: " + std::to_string(ne.note);
+                return;
+            }
+            if (!MidiSpec::isValidVelocity(ne.velocity)) {
+                result.addWarning("Velocity out of range: " + std::to_string(ne.velocity));
+            }
+            
+            if (ne.note < result.minNote) result.minNote = ne.note;
+            if (ne.note > result.maxNote) result.maxNote = ne.note;
+            
+            if (ne.velocity > 0) activeNotes[event.channel * 128 + ne.note]++;
             break;
         }
-        
-        if (memcmp(track_header, "MTrk", 4) != 0) {
-            info.is_valid = false;
-            info.error_msg = "Invalid track signature";
+        case EventType::NoteOff: {
+            auto ne = extractNoteEvent(event);
+            result.noteOffCount++;
+            
+            if (!MidiSpec::isValidNote(ne.note)) {
+                result.isValid = false;
+                result.errorMessage = "Note out of range: " + std::to_string(ne.note);
+                return;
+            }
+            
+            int key = event.channel * 128 + ne.note;
+            auto it = activeNotes.find(key);
+            if (it != activeNotes.end()) {
+                if (it->second > 1) it->second--;
+                else activeNotes.erase(it);
+            }
             break;
         }
-        
-        uint32_t track_len = read_be32(track_header + 4);
-        info.tracks_found++;
-        
-        std::streampos track_start = file.tellg();
-        uint32_t pos = 0;
-        uint8_t running_status = 0;
-        bool has_eot = false;
-        
-        while (pos < track_len && file && info.is_valid) {
-            // ===== READ DELTA TIME (FIXED) =====
-            uint32_t delta_time = 0;
-            uint8_t byte;
-            do {
-                if (!file.read(reinterpret_cast<char*>(&byte), 1)) {
-                    break;
-                }
-                pos++;
-                delta_time = (delta_time << 7) | (byte & 0x7F);
-            } while (byte & 0x80);
-            // delta_time is now correctly stored (not used further but needed for positioning)
-            
-            // ===== READ STATUS =====
-            uint8_t status;
-            if (!file.read(reinterpret_cast<char*>(&status), 1)) {
-                break;
-            }
-            pos++;
-            
-            // Running status
-            if (status < 0x80) {
-                if (running_status == 0) {
-                    info.is_valid = false;
-                    info.error_msg = "Running status without previous event";
-                    break;
-                }
-                // Put back the data byte and use running status
-                file.seekg(-1, std::ios::cur);
-                pos--;
-                status = running_status;
-            } else {
-                running_status = status;
-            }
-            
-            uint8_t cmd = status & 0xF0;
-            
-            // ===== META EVENT =====
-            if (status == 0xFF) {
-                uint8_t meta_type;
-                if (!file.read(reinterpret_cast<char*>(&meta_type), 1)) {
-                    break;
-                }
-                pos++;
+        case EventType::ControlChange: {
+            result.controlChangeCount++;
+            if (event.data.size() >= 2) {
+                uint8_t controller = event.data[0];
+                uint8_t value = event.data[1];
                 
-                uint32_t meta_len = read_varlen(file);
-                // Skip varlen bytes count (approximate)
-                uint32_t temp = meta_len;
-                do {
-                    pos++;
-                    temp >>= 7;
-                } while (temp > 0);
-                
-                if (meta_type == 0x2F) { // End of Track
-                    has_eot = true;
+                if (!MidiSpec::isValidController(controller)) {
+                    result.addWarning("Controller out of range: " + std::to_string(controller));
                 }
                 
-                file.seekg(meta_len, std::ios::cur);
-                pos += meta_len;
-            }
-            // ===== SYSEX EVENT =====
-            else if (status == 0xF0 || status == 0xF7) {
-                uint32_t sysex_len = read_varlen(file);
-                uint32_t temp = sysex_len;
-                do {
-                    pos++;
-                    temp >>= 7;
-                } while (temp > 0);
-                file.seekg(sysex_len, std::ios::cur);
-                pos += sysex_len;
-            }
-            // ===== CHANNEL VOICE MESSAGES =====
-            else {
-                info.total_events++;
-                
-                // Note Off
-                if (cmd == 0x80) {
-                    uint8_t note, vel;
-                    if (!file.read(reinterpret_cast<char*>(&note), 1) ||
-                        !file.read(reinterpret_cast<char*>(&vel), 1)) {
-                        break;
+                // Проверка Channel Mode сообщений
+                if (controller >= 120 && controller <= 127) {
+                    if (!MidiSpec::isValidChannelMode(controller, value)) {
+                        result.addWarning("Invalid channel mode value for controller " + 
+                                         std::to_string(controller) + ": " + std::to_string(value));
                     }
-                    pos += 2;
-                    
-                    if (note > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Note out of range (0-127)";
-                        break;
-                    }
-                    if (vel > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Velocity out of range (0-127)";
-                        break;
-                    }
-                    info.note_off++;
-                }
-                // Note On
-                else if (cmd == 0x90) {
-                    uint8_t note, vel;
-                    if (!file.read(reinterpret_cast<char*>(&note), 1) ||
-                        !file.read(reinterpret_cast<char*>(&vel), 1)) {
-                        break;
-                    }
-                    pos += 2;
-                    
-                    if (note > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Note out of range (0-127)";
-                        break;
-                    }
-                    if (vel > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Velocity out of range (0-127)";
-                        break;
-                    }
-                    
-                    // Track note range (0 is valid)
-                    if (note <= 127) {
-                        if (note < info.min_note) info.min_note = note;
-                        if (note > info.max_note) info.max_note = note;
-                    }
-                    
-                    if (vel > 0) {
-                        info.note_on++;
-                    } else {
-                        info.note_off++;
-                    }
-                }
-                // Poly Aftertouch
-                else if (cmd == 0xA0) {
-                    uint8_t note, pressure;
-                    if (!file.read(reinterpret_cast<char*>(&note), 1) ||
-                        !file.read(reinterpret_cast<char*>(&pressure), 1)) {
-                        break;
-                    }
-                    pos += 2;
-                    
-                    if (note > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Note out of range (0-127)";
-                        break;
-                    }
-                    if (pressure > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Pressure out of range (0-127)";
-                        break;
-                    }
-                }
-                // Control Change
-                else if (cmd == 0xB0) {
-                    uint8_t controller, value;
-                    if (!file.read(reinterpret_cast<char*>(&controller), 1) ||
-                        !file.read(reinterpret_cast<char*>(&value), 1)) {
-                        break;
-                    }
-                    pos += 2;
-                    
-                    if (controller > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Controller number out of range (0-127)";
-                        break;
-                    }
-                    if (value > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Control value out of range (0-127)";
-                        break;
-                    }
-                }
-                // Program Change
-                else if (cmd == 0xC0) {
-                    uint8_t program;
-                    if (!file.read(reinterpret_cast<char*>(&program), 1)) {
-                        break;
-                    }
-                    pos++;
-                    
-                    if (program > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Program number out of range (0-127)";
-                        break;
-                    }
-                }
-                // Channel Aftertouch
-                else if (cmd == 0xD0) {
-                    uint8_t pressure;
-                    if (!file.read(reinterpret_cast<char*>(&pressure), 1)) {
-                        break;
-                    }
-                    pos++;
-                    
-                    if (pressure > 127) {
-                        info.is_valid = false;
-                        info.error_msg = "Pressure out of range (0-127)";
-                        break;
-                    }
-                }
-                // Pitch Bend
-                else if (cmd == 0xE0) {
-                    uint8_t lsb, msb;
-                    if (!file.read(reinterpret_cast<char*>(&lsb), 1) ||
-                        !file.read(reinterpret_cast<char*>(&msb), 1)) {
-                        break;
-                    }
-                    pos += 2;
-                    
-                    uint16_t pitch_bend = (msb << 7) | lsb;
-                    if (pitch_bend > 16383) {
-                        info.is_valid = false;
-                        info.error_msg = "Pitch bend out of range (0-16383)";
-                        break;
-                    }
-                }
-                else {
-                    info.is_valid = false;
-                    info.error_msg = "Unknown MIDI command";
-                    break;
                 }
             }
+            break;
         }
-        
-        if (!info.is_valid) break;
-        
-        if (has_eot) info.tracks_with_eot++;
-        file.seekg(track_start + static_cast<std::streamoff>(track_len), std::ios::beg);
+        case EventType::ProgramChange: {
+            result.programChangeCount++;
+            if (event.data.size() >= 1 && !MidiSpec::isValidProgram(event.data[0])) {
+                result.addWarning("Program out of range: " + std::to_string(event.data[0]));
+            }
+            break;
+        }
+        case EventType::PitchBend: {
+            result.pitchBendCount++;
+            if (event.data.size() >= 2) {
+                uint16_t value = (event.data[1] << 7) | event.data[0];
+                if (!MidiSpec::isValidPitchBend(value)) {
+                    result.addWarning("Pitch bend out of range: " + std::to_string(value));
+                }
+            }
+            break;
+        }
+        case EventType::PolyAftertouch:
+        case EventType::ChannelAftertouch: {
+            result.aftertouchCount++;
+            if (event.data.size() >= 1 && !MidiSpec::isValidPressure(event.data[0])) {
+                result.addWarning("Pressure out of range: " + std::to_string(event.data[0]));
+            }
+            break;
+        }
+        case EventType::SysEx:
+        case EventType::SysExEnd: {
+            result.sysexCount++;
+            break;
+        }
+        default:
+            break;
     }
-    
-    file.close();
-    
-    if (info.is_valid) {
-        if (info.tracks_found != info.num_tracks) {
-            info.is_valid = false;
-            info.error_msg = "Track count mismatch";
-        }
-        else if (info.tracks_with_eot != info.tracks_found) {
-            info.is_valid = false;
-            info.error_msg = "Missing EOT markers";
-        }
-    }
-    
-    return info;
 }
 
-void MidiAnalyzer::printReport(const std::string& filename, const MidiInfo& info) {
-    std::cout << "\n+--------------------------------------------------+\n";
-    std::cout << "| FILE HEADER                                      |\n";
-    std::cout << "+--------------------------------------------------+\n";
-    std::cout << "| Filename:        " << filename << "\n";
-    std::cout << "| Format:          " << info.format;
-    if (info.format == 0) std::cout << " (single track)\n";
-    else if (info.format == 1) std::cout << " (multi-track)\n";
-    else if (info.format == 2) std::cout << " (multi-song)\n";
-    else std::cout << " (unknown)\n";
-    std::cout << "| Tracks declared: " << info.num_tracks << "\n";
-    std::cout << "| Tracks found:    " << info.tracks_found << "\n";
-    if (info.division & 0x8000) {
-        std::cout << "| Division:        SMPTE format\n";
-    } else {
-        std::cout << "| Division:        " << info.division << " ticks per quarter note\n";
-    }
-    std::cout << "| File size:       " << info.file_size << " bytes\n";
-    std::cout << "+--------------------------------------------------+\n";
-    
-    std::cout << "\n+--------------------------------------------------+\n";
-    std::cout << "| TRACK INFORMATION                                |\n";
-    std::cout << "+--------------------------------------------------+\n";
-    std::cout << "| Tracks with EOT: " << info.tracks_with_eot;
-    if (info.tracks_with_eot != info.tracks_found && info.tracks_found > 0) {
-        std::cout << " [WARNING: " << (info.tracks_found - info.tracks_with_eot) << " missing EOT]";
-    }
-    std::cout << "\n+--------------------------------------------------+\n";
-    
-    std::cout << "\n+--------------------------------------------------+\n";
-    std::cout << "| EVENT STATISTICS                                 |\n";
-    std::cout << "+--------------------------------------------------+\n";
-    std::cout << "| Total events:    " << info.total_events << "\n";
-    std::cout << "| Note On events:  " << info.note_on << "\n";
-    std::cout << "| Note Off events: " << info.note_off << "\n";
-    if (info.note_on + info.note_off > 0) {
-        std::cout << "| Note range:      " << (int)info.min_note << " - " << (int)info.max_note << "\n";
-    }
-    std::cout << "+--------------------------------------------------+\n";
-    
-    std::cout << "\n+--------------------------------------------------+\n";
-    std::cout << "| INTEGRITY CHECKS                                 |\n";
-    std::cout << "+--------------------------------------------------+\n";
-    
-    if (!info.error_msg.empty()) {
-        std::cout << "| [ERROR] " << info.error_msg << "\n";
-    }
-    
-    if (info.is_valid) {
-        std::cout << "| [OK] All integrity checks passed\n";
-        std::cout << "+--------------------------------------------------+\n";
-        std::cout << "\n+--------------------------------------------------+\n";
-        std::cout << "| [OK] FILE IS VALID                                |\n";
-        std::cout << "+--------------------------------------------------+\n";
-    } else {
-        if (info.tracks_with_eot != info.tracks_found && info.error_msg.empty()) {
-            std::cout << "| [WARNING] " << (info.tracks_found - info.tracks_with_eot) 
-                      << " track(s) missing End of Track marker\n";
+void MidiAnalyzer::calculatePolyphony(AnalysisResult& result, const MidiFileData& data) {
+    std::map<int, int> active;
+    int maxActive = 0;
+    for (const auto& track : data.tracks) {
+        for (const auto& event : track.events) {
+            if (event.type == EventType::NoteOn && event.data.size() >= 2 && event.data[1] > 0) {
+                int key = event.channel * 128 + event.data[0];
+                active[key]++;
+                if (static_cast<int>(active.size()) > maxActive) {
+                    maxActive = static_cast<int>(active.size());
+                }
+            } else if ((event.type == EventType::NoteOff) ||
+                       (event.type == EventType::NoteOn && event.data.size() >= 2 && event.data[1] == 0)) {
+                int key = event.channel * 128 + event.data[0];
+                auto it = active.find(key);
+                if (it != active.end()) {
+                    if (it->second > 1) it->second--;
+                    else active.erase(it);
+                }
+            }
         }
-        std::cout << "+--------------------------------------------------+\n";
-        std::cout << "\n+--------------------------------------------------+\n";
-        std::cout << "| [ERROR] FILE IS INVALID                            |\n";
-        std::cout << "+--------------------------------------------------+\n";
+    }
+    result.maxPolyphony = maxActive;
+}
+
+void MidiAnalyzer::calculateDuration(AnalysisResult& result, const MidiFileData& data) {
+    if (data.isSMPTE || data.getTicksPerQuarterNote() == 0) {
+        result.durationSeconds = 0.0;
+        return;
+    }
+    
+    uint32_t maxTicks = 0;
+    for (const auto& track : data.tracks) {
+        uint32_t ticks = 0;
+        for (const auto& event : track.events) ticks += event.deltaTime;
+        if (ticks > maxTicks) maxTicks = ticks;
+    }
+    
+    auto tempoMap = buildTempoMap(data);
+    double totalSec = 0.0;
+    uint32_t lastTick = 0;
+    double currentBPM = 120.0;
+    
+    for (const auto& pair : tempoMap) {
+        if (pair.first > lastTick) {
+            double secPerTick = 60.0 / currentBPM / data.getTicksPerQuarterNote();
+            totalSec += (pair.first - lastTick) * secPerTick;
+        }
+        lastTick = pair.first;
+        currentBPM = pair.second;
+    }
+    
+    if (maxTicks > lastTick) {
+        double secPerTick = 60.0 / currentBPM / data.getTicksPerQuarterNote();
+        totalSec += (maxTicks - lastTick) * secPerTick;
+    }
+    
+    result.durationSeconds = totalSec;
+}
+
+std::map<uint32_t, double> MidiAnalyzer::buildTempoMap(const MidiFileData& data) {
+    std::map<uint32_t, double> tempoMap;
+    tempoMap[0] = 120.0;
+    uint32_t tick = 0;
+    
+    for (const auto& track : data.tracks) {
+        tick = 0;
+        for (const auto& event : track.events) {
+            tick += event.deltaTime;
+            if (event.type == EventType::MetaEvent && !event.data.empty()) {
+                if (event.data[0] == MetaEvent::SET_TEMPO && event.data.size() >= 4) {
+                    uint32_t uspq = (event.data[1] << 16) | (event.data[2] << 8) | event.data[3];
+                    if (uspq > 0) tempoMap[tick] = 60000000.0 / uspq;
+                }
+            }
+        }
+    }
+    return tempoMap;
+}
+
+void MidiAnalyzer::validateRules(const MidiFileData& data, AnalysisResult& result) {
+    if (result.tracksWithEOT != static_cast<int>(data.tracks.size()) && data.tracks.size() > 0) {
+        result.isValid = false;
+        result.errorMessage = "Missing End of Track markers";
+        return;
+    }
+    
+    if (data.format == 0 && data.tracks.size() != 1 && data.tracks.size() > 0) {
+        result.isValid = false;
+        result.errorMessage = "Format 0 must have exactly 1 track";
+        return;
+    }
+    
+    if (data.format == 1 && data.tracks.size() < 1) {
+        result.isValid = false;
+        result.errorMessage = "Format 1 must have at least 1 track";
+        return;
     }
 }
+
+NoteEvent MidiAnalyzer::extractNoteEvent(const MidiEvent& event) {
+    NoteEvent ne = {0, 0};
+    if (event.data.size() >= 2) { ne.note = event.data[0]; ne.velocity = event.data[1]; }
+    return ne;
+}
+
+ControlChangeEvent MidiAnalyzer::extractControlChange(const MidiEvent& event) {
+    ControlChangeEvent cc = {0, 0};
+    if (event.data.size() >= 2) { cc.controller = event.data[0]; cc.value = event.data[1]; }
+    return cc;
+}
+
+PitchBendEvent MidiAnalyzer::extractPitchBend(const MidiEvent& event) {
+    PitchBendEvent pb = {8192};
+    if (event.data.size() >= 2) pb.value = (event.data[1] << 7) | event.data[0];
+    return pb;
+}
+
+ProgramChangeEvent MidiAnalyzer::extractProgramChange(const MidiEvent& event) {
+    ProgramChangeEvent pc = {0};
+    if (event.data.size() >= 1) pc.program = event.data[0];
+    return pc;
+}
+
+MetaEvent MidiAnalyzer::extractMetaEvent(const MidiEvent& event) {
+    MetaEvent meta = {0, {}};
+    if (!event.data.empty()) {
+        meta.metaType = event.data[0];
+        if (event.data.size() > 1) meta.data.assign(event.data.begin() + 1, event.data.end());
+    }
+    return meta;
+}
+
+} // namespace midi

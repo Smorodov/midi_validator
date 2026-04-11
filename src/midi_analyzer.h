@@ -1,42 +1,46 @@
 #ifndef MIDI_ANALYZER_H
 #define MIDI_ANALYZER_H
 
+#include "midi_types.h"
+#include "midi_reader.h"
 #include <string>
-#include <cstdint>
+#include <map>
 
-struct MidiInfo {
-    bool is_valid = true;
-    std::string error_msg;
-    
-    // Header info
-    uint16_t format = 0;
-    uint16_t num_tracks = 0;
-    uint16_t division = 0;
-    uint32_t file_size = 0;
-    
-    // Track info
-    int tracks_found = 0;
-    int tracks_with_eot = 0;
-    
-    // Event stats
-    uint32_t total_events = 0;
-    uint32_t note_on = 0;
-    uint32_t note_off = 0;
-    
-    // Note range (0-127, both inclusive)
-    uint8_t min_note = 127;
-    uint8_t max_note = 0;
-};
+namespace midi {
 
 class MidiAnalyzer {
 public:
-    MidiInfo analyze(const std::string& filename);
-    void printReport(const std::string& filename, const MidiInfo& info);
+    MidiAnalyzer();
+    ~MidiAnalyzer();
+    
+    AnalysisResult analyze(const MidiFileData& fileData);
+    AnalysisResult analyzeFile(const std::string& filename);
+    const std::string& getLastError() const { return m_lastError; }
     
 private:
-    uint16_t read_be16(const uint8_t* p);
-    uint32_t read_be32(const uint8_t* p);
-    uint32_t read_varlen(std::ifstream& file);
+    void processEvent(const MidiEvent& event, AnalysisResult& result, std::map<int, int>& activeNotes);
+    void calculateDuration(AnalysisResult& result, const MidiFileData& data);
+    void calculatePolyphony(AnalysisResult& result, const MidiFileData& data);
+    void validateRules(const MidiFileData& data, AnalysisResult& result);
+    
+    NoteEvent extractNoteEvent(const MidiEvent& event);
+    ControlChangeEvent extractControlChange(const MidiEvent& event);
+    PitchBendEvent extractPitchBend(const MidiEvent& event);
+    ProgramChangeEvent extractProgramChange(const MidiEvent& event);
+    MetaEvent extractMetaEvent(const MidiEvent& event);
+    
+    bool validateNoteRange(uint8_t note, AnalysisResult& result);
+    bool validateVelocityRange(uint8_t velocity, AnalysisResult& result);
+    bool validateControllerRange(uint8_t controller, AnalysisResult& result);
+    bool validateProgramRange(uint8_t program, AnalysisResult& result);
+    bool validatePitchBendRange(uint16_t value, AnalysisResult& result);
+    bool validatePressureRange(uint8_t pressure, AnalysisResult& result);
+    
+    std::map<uint32_t, double> buildTempoMap(const MidiFileData& data);
+    
+    std::string m_lastError;
 };
+
+} // namespace midi
 
 #endif
