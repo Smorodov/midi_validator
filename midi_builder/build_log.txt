@@ -1,0 +1,36 @@
+ECHO is off.
+-- Configuring done (0.2s)
+-- Generating done (0.1s)
+-- Build files have been written to: E:/projects/midi_validator/midi_builder/build
+Change Dir: 'E:/projects/midi_validator/midi_builder/build'
+
+Run Build Command(s): C:/msys64/mingw64/bin/cmake.exe -E env VERBOSE=1 C:/msys64/mingw64/bin/mingw32-make.exe -f Makefile -j4
+C:\msys64\mingw64\bin\cmake.exe -SE:\projects\midi_validator\midi_builder -BE:\projects\midi_validator\midi_builder\build --check-build-system CMakeFiles\Makefile.cmake 0
+C:\msys64\mingw64\bin\cmake.exe -E cmake_progress_start E:\projects\midi_validator\midi_builder\build\CMakeFiles E:\projects\midi_validator\midi_builder\build\\CMakeFiles\progress.marks
+C:/msys64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\Makefile2 all
+mingw32-make[1]: Entering directory 'E:/projects/midi_validator/midi_builder/build'
+C:/msys64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\demo.dir\build.make CMakeFiles/demo.dir/depend
+C:/msys64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\demo_two_instruments.dir\build.make CMakeFiles/demo_two_instruments.dir/depend
+mingw32-make[2]: Entering directory 'E:/projects/midi_validator/midi_builder/build'
+C:\msys64\mingw64\bin\cmake.exe -E cmake_depends "MinGW Makefiles" E:\projects\midi_validator\midi_builder E:\projects\midi_validator\midi_builder E:\projects\midi_validator\midi_builder\build E:\projects\midi_validator\midi_builder\build E:\projects\midi_validator\midi_builder\build\CMakeFiles\demo.dir\DependInfo.cmake "--color=" demo
+mingw32-make[2]: Entering directory 'E:/projects/midi_validator/midi_builder/build'
+C:\msys64\mingw64\bin\cmake.exe -E cmake_depends "MinGW Makefiles" E:\projects\midi_validator\midi_builder E:\projects\midi_validator\midi_builder E:\projects\midi_validator\midi_builder\build E:\projects\midi_validator\midi_builder\build E:\projects\midi_validator\midi_builder\build\CMakeFiles\demo_two_instruments.dir\DependInfo.cmake "--color=" demo_two_instruments
+Dependencies file "CMakeFiles/demo.dir/demo.cpp.obj.d" is newer than depends file "E:/projects/midi_validator/midi_builder/build/CMakeFiles/demo.dir/compiler_depend.internal".
+Consolidate compiler generated dependencies of target demo
+Dependencies file "CMakeFiles/demo_two_instruments.dir/demo_two_instruments.cpp.obj.d" is newer than depends file "E:/projects/midi_validator/midi_builder/build/CMakeFiles/demo_two_instruments.dir/compiler_depend.internal".
+Consolidate compiler generated dependencies of target demo_two_instruments
+mingw32-make[2]: Leaving directory 'E:/projects/midi_validator/midi_builder/build'
+mingw32-make[2]: Leaving directory 'E:/projects/midi_validator/midi_builder/build'
+C:/msys64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\demo.dir\build.make CMakeFiles/demo.dir/build
+C:/msys64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\demo_two_instruments.dir\build.make CMakeFiles/demo_two_instruments.dir/build
+mingw32-make[2]: Entering directory 'E:/projects/midi_validator/midi_builder/build'
+mingw32-make[2]: Nothing to be done for 'CMakeFiles/demo.dir/build'.
+mingw32-make[2]: Leaving directory 'E:/projects/midi_validator/midi_builder/build'
+mingw32-make[2]: Entering directory 'E:/projects/midi_validator/midi_builder/build'
+mingw32-make[2]: Nothing to be done for 'CMakeFiles/demo_two_instruments.dir/build'.
+mingw32-make[2]: Leaving directory 'E:/projects/midi_validator/midi_builder/build'
+[ 50%] Built target demo
+[100%] Built target demo_two_instruments
+mingw32-make[1]: Leaving directory 'E:/projects/midi_validator/midi_builder/build'
+C:\msys64\mingw64\bin\cmake.exe -E cmake_progress_start E:\projects\midi_validator\midi_builder\build\CMakeFiles 0
+
